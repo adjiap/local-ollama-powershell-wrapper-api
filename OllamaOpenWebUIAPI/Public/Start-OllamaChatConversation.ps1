@@ -1,6 +1,3 @@
-# Import helper scripts
-. .\Get-AvailableOllamaModels.ps1
-
 function Start-OllamaChatConversation {
 	<#
 	.SYNOPSIS
