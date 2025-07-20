@@ -355,9 +355,9 @@ function Invoke-OllamaChatBatch {
 						$results += $result
 						
 						if ($result.Success) {
-							Write-Verbose "✓ Job $($result.Index + 1) completed successfully"
+							Write-Verbose "✅ Job $($result.Index + 1) completed successfully"
 						} else {
-							Write-Warning "✗ Job $($result.Index + 1) failed: $($result.Error)"
+							Write-Warning "❌ Job $($result.Index + 1) failed: $($result.Error)"
 							if (-not $ContinueOnError) {
 									throw "Job failed: $($result.Error)"
 							}
