@@ -1,4 +1,4 @@
-# Ollama OpenWeBUI PowerShell API
+# Ollama OpenWebUI PowerShell API
 
 > [!NOTE]
 > The basis of this knowledge is [my previous project for local LLM](https://github.com/adjiap/local_ollama_powershell_setup). In general, it should work with any OpenWebUI-based on-premise LLM.
