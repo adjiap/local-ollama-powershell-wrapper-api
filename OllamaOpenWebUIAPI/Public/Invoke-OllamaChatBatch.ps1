@@ -61,6 +61,10 @@ function Invoke-OllamaChatBatch {
 		If specified, returns only the answers without the prompts.
 		Only works when ReturnFullResponse is not used.
 	
+	.PARAMETER PassThru
+		If specified, it will return the answer from the script into a variable
+		Only works when ReturnFullResponse is not used.
+
 	.INPUTS
 		String[]. You can pipe an array of strings to Invoke-OllamaChatBatch.
 
@@ -82,7 +86,7 @@ function Invoke-OllamaChatBatch {
 			"How do I secure Docker containers?",
 			"What is shift-left security?"
 		)
-		$results = Invoke-OllamaChatBatch -Prompts $questions
+		$results = Invoke-OllamaChatBatch -Prompts $questions -PassThru
 		
 		Processes three security-related questions using the default model (llama3.2:3b)
 		with default concurrency settings.
@@ -93,7 +97,7 @@ function Invoke-OllamaChatBatch {
 			"Create a bash script to backup databases",
 			"Write a PowerShell function to test network connectivity"
 		)
-		$results = Invoke-OllamaChatBatch -Prompts $codePrompts -Model "codellama:7b" -MaxConcurrentJobs 2 -ShowProgress
+		Invoke-OllamaChatBatch -Prompts $codePrompts -Model "codellama:7b" -MaxConcurrentJobs 2 -ShowProgress
 		
 		Processes code generation prompts using the specialized CodeLlama model with limited
 		concurrency and progress display.
@@ -207,7 +211,10 @@ function Invoke-OllamaChatBatch {
 		[switch]$ReturnFullResponse,
 		
 		[Parameter(Mandatory=$false)]
-		[switch]$RemovePromptInAnswer
+		[switch]$RemovePromptInAnswer,
+
+		[Parameter(Mandatory=$false)]
+		[switch]$PassThru
 	)
 	
 	begin {
@@ -391,33 +398,69 @@ function Invoke-OllamaChatBatch {
 		
 		# Sort results by original index to maintain order
 		$sortedResults = $results | Sort-Object Index
-		
+
 		# Return based on flags
 		if ($ReturnFullResponse) {
+			# Always return full objects when explicitly requested
 			return $sortedResults
+
 		} elseif ($RemovePromptInAnswer) {
 			# Return only the answers
-			Write-Host ""
-			$sortedResults | ForEach-Object {
-				if ($_.Success) {
-					Write-Host "$($_.Index + 1). $($_.Response)" -ForegroundColor White
+			$answers = $sortedResults | ForEach-Object {
+				if ($_.Success){
+					$_.Response
 				} else {
-					Write-Host "$($_.Index + 1). [ERROR: $($_.Error)]" -ForegroundColor Red
+					"[ERROR: $($_.Error)]"
 				}
+			}
+
+			if ($PassThru) {
+				# Being assigned to variable - return array
+				return $answers
+
+			} else {
+				# Directly displays the results
 				Write-Host ""
+				for ($i = 0; $i -lt $answers.Count; $i++) {
+					if ($sortedResults[$i].Success) {
+						Write-Host "$($i + 1). $($answers[$i])" -ForegroundColor White
+					} else {
+						Write-Host "$($i + 1). $($answers[$i])" -ForegroundColor Red
+					}
+					Write-Host ""
 				}
+			}
+
 		} else {
-			# Default: Return formatted prompt + answer
-			Write-Host ""
-			$sortedResults | ForEach-Object {
-				if ($_.Success) {
-					Write-Host "$($_.Index + 1). $($_.Prompt)" -ForegroundColor Cyan
-					Write-Host "   > $($_.Response)" -ForegroundColor White
-				} else {
-					Write-Host "$($_.Index + 1). $($_.Prompt)" -ForegroundColor Cyan
-					Write-Host "   > [ERROR: $($_.Error)]" -ForegroundColor Red
+			# Default: Return formatted prompt + answer or displayed
+			$formattedResults = $sortedResults | ForEach-Object {
+				[PSCustomObject]@{
+					Index = $_.Index + 1
+					Question = $_.Prompt
+					Answer = if ($_.Success) { $_.Response } else { "[ERROR: $($_.Error)]" }
+					Success = $_.Success
+					Error = $_.Error
+					Duration = $_.Duration
 				}
+			}
+
+			if ($PassThru) {
+				# Being assigned to variable - return objects
+				return $formattedResults
+
+			} else {
+				# Not assigned - display formatted
 				Write-Host ""
+				$formattedResults | ForEach-Object {
+						if ($_.Success) {
+								Write-Host "$($_.Index). $($_.Question)" -ForegroundColor Cyan
+								Write-Host "   > $($_.Answer)" -ForegroundColor White
+						} else {
+								Write-Host "$($_.Index). $($_.Question)" -ForegroundColor Cyan
+								Write-Host "   > $($_.Answer)" -ForegroundColor Red
+						}
+						Write-Host ""
+				}
 			}
 		}
 	}
