@@ -37,6 +37,8 @@ This project is an extension of the local RAG LLM that I had built in my previou
 <!-- GETTING STARTED -->
 ## Getting Started
 You first need to get the API Key for your account. You can get it in Settings -> Account -> API Key
+<img width="450" height="290" alt="image" src="https://github.com/user-attachments/assets/31c4fda3-49bd-4420-8148-5c1718cc61f6" />
+
 
 ### Environment Setup
 
@@ -47,9 +49,9 @@ Required environment variables:
 - `OLLAMA_API_SINGLE_RESPONSE`: Generate endpoint path
 - `OLLAMA_API_TAGS`: Tags endpoint path
 
-> [!INFO]
-> I deliberately not hardcode the API, and having it from the `.env`, because I'd like to have it modular, in case Ollama changes its API (unlikely, but still). Moreover, you can change it to OpenAI's API if you don't use Ollama. 
-> Maybe in the future I'd update the module to also have OpenAI's API, but for now, I'm going to stick with only Ollama API.
+> [!NOTE]
+> I deliberately not hardcode the API, and having it from the `.env`, because I'd like to have it modular, in case Ollama changes its API (unlikely, but still).
+> Moreover, you can change it to OpenAI's API if you don't use Ollama. Maybe in the future I'd update the module to also have OpenAI's API, but for now, I'm going to stick with only Ollama API.
 
 Have the variables above imported in your environment. Here's a sample `.env` for you to copy to get you started.
 
