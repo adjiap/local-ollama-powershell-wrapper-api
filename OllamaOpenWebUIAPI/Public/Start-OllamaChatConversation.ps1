@@ -65,10 +65,12 @@ function Start-OllamaChatConversation {
 		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL',
-			'OLLAMA_API_CHAT',
-			'OLLAMA_API_TAGS'
+			'OPENWEBUI_URL'
 		)
+		$optionalEnvVars = @{
+			'OLLAMA_API_CHAT' = "ollama/api/chat"
+			'OLLAMA_API_TAGS'	=	"ollama/api/tags"
+		}
 		$missingVars = @()
 
 		foreach ($var in $requiredEnvVars) {
@@ -76,6 +78,13 @@ function Start-OllamaChatConversation {
 				$missingVars += $var
 			}
 		}
+		# Set optional variables with defaults if not present
+    foreach ($var in $optionalEnvVars.Keys) {
+			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
+				Write-Host "Using default value for $var" -ForegroundColor Yellow
+				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
+			}
+    }
 		if ($missingVars.Count -gt 0) {
 			Write-Error "Missing required environment variables: $($missingVars -join ', ')"
 			Write-Error "Add the environment variables first into your CLI"
