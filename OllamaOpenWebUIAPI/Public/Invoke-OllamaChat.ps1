@@ -15,13 +15,7 @@ function Invoke-OllamaChat {
 
 	.PARAMETER Model
 		The Ollama model to use for generation. Must be one of the available models.
-		Default: "llama3.2:latest"
-		
-		Available models:
-		- llama3.2:latest   - Fast, efficient for general tasks and quick responses
-		- llama3.1:latest    - Balanced performance, good for complex reasoning and detailed responses (CLI ONLY!)
-		- mistral:latest     - Excellent for creative writing, analysis, and instruction following
-		- codellama:latest   - Specialized for code generation, debugging, and programming tasks
+		Defaults to the first found model in Ollama.
 
 	.PARAMETER SystemPrompt
 		Optional system prompt to set the behavior and context for the model.
@@ -92,9 +86,11 @@ function Invoke-OllamaChat {
 	.NOTES  
 		Required Environment Variables:
 		- OPENWEBUI_API_KEY: Your OpenWebUI API key
-		- OPENWEBUI_URL: Base URL for OpenWebUI (e.g., http://localhost:3000)
-		- OLLAMA_API_GENERATE: API endpoint for generation (e.g., /ollama/api/generate)
-		- OLLAMA_API_TAGS: API endpoint for model tags (e.g., /ollama/api/tags)
+		- OPENWEBUI_URL: Base URL for OpenWebUI (e.g., http://localhost:3000/)
+
+		Optional Environment Variables:
+		- OLLAMA_API_GENERATE: API endpoint for generation (e.g., ollama/api/generate)
+		- OLLAMA_API_TAGS: API endpoint for model tags (e.g., ollama/api/tags)
 
 	.FUNCTIONALITY
 		This function provides single-shot interaction with Ollama models through OpenWebUI,
