@@ -52,7 +52,7 @@ function Start-OllamaChatConversation {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory=$false)]
-		[string]$Model = "llama3.2:latest",
+		[string]$Model,
 
 		[Parameter(Mandatory=$false)]
 		[string]$SystemPrompt = "Only give short answers, with what is asked for",
@@ -102,6 +102,8 @@ function Start-OllamaChatConversation {
 			$availableModels | ForEach-Object {
 				Write-Host "    - $($_.name)" -ForegroundColor Cyan
 			}
+			$Model = $availableModels[0].name # By default, use the first model found.
+			Write-Verbose "Using default model: $Model"
 		} else {
 			Write-Error "No models found or error connecting to API"
 			$abort = $true
