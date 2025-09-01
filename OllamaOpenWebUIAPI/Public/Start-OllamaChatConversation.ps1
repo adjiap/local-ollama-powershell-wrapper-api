@@ -72,12 +72,36 @@ function Start-OllamaChatConversation {
 			'OLLAMA_API_TAGS'	=	"ollama/api/tags"
 		}
 		$missingVars = @()
+		$uriValidationFailed = $false
 
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				$missingVars += $var
 			}
 		}
+		if ($missingVars.Count -gt 0) {
+			Write-Error "Missing required environment variables: $($missingVars -join ', ')"
+			Write-Error "Add the environment variables first into your CLI"
+			$abort = $true
+		}
+		
+		# Validate OPENWEBUI_URL (absolute URI)
+		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
+		if ($openWebUIUrl) {
+			try {
+				$uri = [System.Uri]::new($openWebUIUrl)
+				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
+					$uriValidationFailed = $true
+				} else {
+					Write-Verbose "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+				}
+			} catch {
+				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
+				$uriValidationFailed = $true
+			}
+		}
+		
 		# Set optional variables with defaults if not present
     foreach ($var in $optionalEnvVars.Keys) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
@@ -85,9 +109,31 @@ function Start-OllamaChatConversation {
 				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
 			}
     }
-		if ($missingVars.Count -gt 0) {
-			Write-Error "Missing required environment variables: $($missingVars -join ', ')"
-			Write-Error "Add the environment variables first into your CLI"
+		# Combine and validate OLLAMA_API_* URIs
+		$chatApiUrl = $null
+		foreach ($var in $optionalEnvVars.Keys) {
+			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
+			if ($envItem -and $openWebUIUrlItem) {
+				try {
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
+					$fullUrl = $combinedUri.ToString()
+					
+					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
+					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
+					
+					# Store the chat API URL for later use
+					if ($var -eq 'OLLAMA_API_CHAT') {
+						$chatApiUrl = $fullUrl
+					}
+				} catch {
+					Write-Error "$var URL combination failed: $($_.Exception.Message)"
+					$uriValidationFailed = $true
+				}
+			}
+		}
+
+		if ($uriValidationFailed) {
 			$abort = $true
 		}
 		#endregion
@@ -199,14 +245,13 @@ function Start-OllamaChatConversation {
 			}
 			
 			$jsonBody = $body | ConvertTo-Json -Depth 10
-			$uri = "$env:OPENWEBUI_URL" + "$env:OLLAMA_API_CHAT"
 			
 			try {		
-				Write-Verbose "Making API call to $uri"
+				Write-Verbose "Making API call to $chatApiUrl"
 				Write-Verbose "Using model $Model"
 				Write-Verbose "System Prompt: $SystemPrompt"
 				
-				$response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $jsonBody
+				$response = Invoke-RestMethod -Uri $chatApiUrl -Method Post -Headers $headers -Body $jsonBody
 				$assistantResponse = $response.message.content
 				
 				Write-Host ""
