@@ -8,7 +8,7 @@ function Start-OllamaChatConversation {
 		Supports conversation history, model switching, and various interactive commands.
 
 	.PARAMETER Model
-		The name of the Ollama model to use for the conversation. Default is "llama3.2:latest".
+		The name of the Ollama model to use for the conversation.
 
 	.PARAMETER SystemPrompt
 		The system prompt that defines the AI's behavior and context. Default is "Only give short answers, with what is asked for".
@@ -40,8 +40,14 @@ function Start-OllamaChatConversation {
 		Environment Variables Required:
 		- OPENWEBUI_API_KEY: Bearer token for API authentication
 		- OPENWEBUI_URL: Base URL for OpenWebUI instance
-		- OLLAMA_API_TAGS: Endpoint for available models
-		- OLLAMA_API_CHAT: Endpoint for chat completions
+
+		Optional Environment Variables:
+		- OLLAMA_API_CHAT: API Endpoint for chat completions (e.g., ollama/api/chat)
+		- OLLAMA_API_TAGS: API Endpoint for available models tags (e.g., ollama/api/tags)
+	
+	.FUNCTIONALITY
+		This function starts a conversation with Ollama models through PowerShell CLI
+		using OpenWebUI API
 	#>
 	[CmdletBinding()]
 	param (
