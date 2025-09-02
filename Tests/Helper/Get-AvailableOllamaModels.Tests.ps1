@@ -121,7 +121,7 @@ Describe "Get-AvailableOllamaModels" {
 		It "Should call correct API endpoint" {
 			Get-AvailableOllamaModels
 			
-			Invoke-CommandInModule Invoke-RestMethod -Times 1 -ParameterFilter {
+			Assert-MockCommandInModule Invoke-RestMethod -Times 1 -ParameterFilter {
 				$Uri -eq "http://localhost:3000/ollama/api/tags"
 			}
 		}
@@ -129,7 +129,7 @@ Describe "Get-AvailableOllamaModels" {
 		It "Should include proper headers" {
 			Get-AvailableOllamaModels
 			
-			Invoke-CommandInModule Invoke-RestMethod -Times 1 -ParameterFilter {
+			Assert-MockCommandInModule Invoke-RestMethod -Times 1 -ParameterFilter {
 				$Headers.Authorization -eq "Bearer test-api-key-12345"
 			}
 		}

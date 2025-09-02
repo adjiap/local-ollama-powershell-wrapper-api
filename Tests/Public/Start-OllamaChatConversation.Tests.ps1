@@ -90,7 +90,7 @@ Describe "Start-OllamaChatConversation" {
         # Expected - function will fail when it hits interactive loop
       }
       
-      Invoke-CommandInModule Get-AvailableOllamaModels -Times 1
+      Assert-MockCommandInModule Get-AvailableOllamaModels -Times 1
     }
   }
 

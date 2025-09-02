@@ -107,7 +107,7 @@ Describe "Invoke-OllamaChat" {
     It "Should use default model when none specified" {
       Invoke-OllamaChat "Test prompt"
 
-      Invoke-CommandInModule Invoke-RestMethod -ParameterFilter {
+      Assert-MockCommandInModule Invoke-RestMethod -ParameterFilter {
         ($Body | ConvertFrom-Json).model -eq "llama3.2:3b"
       }
     }
@@ -115,7 +115,7 @@ Describe "Invoke-OllamaChat" {
     It "Should use specified model" {
       Invoke-OllamaChat "Test prompt" -Model "mistral:latest"
 
-      Invoke-CommandInModule Invoke-RestMethod -ParameterFilter {
+      Assert-MockCommandInModule Invoke-RestMethod -ParameterFilter {
         ($Body | ConvertFrom-Json).model -eq "mistral:latest"
       }
     }
@@ -123,7 +123,7 @@ Describe "Invoke-OllamaChat" {
     It "Should include system prompt" {
       Invoke-OllamaChat "Test prompt" -SystemPrompt "Custom system prompt"
 
-      Invoke-CommandInModule Invoke-RestMethod -ParameterFilter {
+      Assert-MockCommandInModule Invoke-RestMethod -ParameterFilter {
         ($Body | ConvertFrom-Json).system -eq "Custom system prompt"
       }
     }
@@ -152,7 +152,7 @@ Describe "Invoke-OllamaChat" {
 
       Invoke-OllamaChat "Test" -Temperature 0.7
 
-      Invoke-CommandInModule Invoke-RestMethod -ParameterFilter {
+      Assert-MockCommandInModule Invoke-RestMethod -ParameterFilter {
         ($Body | ConvertFrom-Json).options.temperature -eq 0.7
       }
     }
@@ -163,7 +163,7 @@ Describe "Invoke-OllamaChat" {
 
       Invoke-OllamaChat "Test" -MaxTokens 100
 
-      Invoke-CommandInModule Invoke-RestMethod -ParameterFilter {
+      Assert-MockCommandInModule Invoke-RestMethod -ParameterFilter {
         ($Body | ConvertFrom-Json).options.num_predict -eq 100
       }
     }

@@ -299,7 +299,7 @@ function Invoke-OllamaChatBatch {
             Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
             $abort = $true
         } else {
-            Write-Verbose "✓ Using specified model: $Model" -ForegroundColor Green
+            Write-Verbose "✓ Using specified model: $Model"
         }
 			}
 		} else {

@@ -81,7 +81,7 @@ function New-MockModelsResponse {
   }
 }
 
-function Invoke-CommandInModule {
+function Assert-MockCommandInModule {
   param(
     [string]$CommandName, 
     [int]$Times = 1, 

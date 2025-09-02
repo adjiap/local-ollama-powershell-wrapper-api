@@ -152,7 +152,7 @@ Describe "Invoke-OllamaChatBatch" {
         # It's expected to throw
       }
 
-      Invoke-CommandInModule Start-Job -Times 1
+      Assert-MockCommandInModule Start-Job -Times 1
     }
   }
 }
