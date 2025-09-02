@@ -241,7 +241,7 @@ function Invoke-OllamaChatBatch {
 					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
 					$uriValidationFailed = $true
 				} else {
-					Write-Debug "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+					Write-Verbose "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
 				}
 			} catch {
 				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
