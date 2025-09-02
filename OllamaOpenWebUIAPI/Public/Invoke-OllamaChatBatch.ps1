@@ -179,13 +179,7 @@ function Invoke-OllamaChatBatch {
 		[string[]]$Prompts,
 		
 		[Parameter(Mandatory=$false)]
-		[ValidateSet(
-			"llama3.2:latest",
-			"llama3.1:latest",
-			"mistral:latest",
-			"codellama:latest"
-		)]
-		[string]$Model = "llama3.2:latest",
+		[string]$Model,
 		
 		[Parameter(Mandatory=$false)]
 		[string]$SystemPrompt = "Only give short answers, with what is asked for",
