@@ -122,7 +122,6 @@ function Invoke-OllamaChat {
 	)
 	
 	begin {
-		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
 			'OPENWEBUI_URL'
@@ -134,6 +133,7 @@ function Invoke-OllamaChat {
 		$missingVars = @()
 		$uriValidationFailed = $false
 
+		#region Check Required Variables
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				$missingVars += $var
@@ -144,8 +144,9 @@ function Invoke-OllamaChat {
 			Write-Error "Add the environment variables first into your CLI"
 			$abort = $true
 		}
+		#endregion
 
-		# Validate OPENWEBUI_URL (absolute URI)
+		#region Validate OPENWEBUI_URL (absolute URI)
 		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
 		if ($openWebUIUrl) {
 			try {
@@ -161,16 +162,18 @@ function Invoke-OllamaChat {
 				$uriValidationFailed = $true
 			}
 		}
+		#endregion
 
-		# Set optional variables with defaults if not present
+		#region Set optional variables
     foreach ($var in $optionalEnvVars.Keys) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				Write-Host "Using default value for $var" -ForegroundColor Yellow
 				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
 			}
     }
+		#endregion
 
-		# Combine and validate OLLAMA_API_* URIs
+		#region Combine and validate OLLAMA_API_* URIs
 		$chatApiUrl = $null
 		foreach ($var in $optionalEnvVars.Keys) {
 			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
@@ -224,7 +227,7 @@ function Invoke-OllamaChat {
 		# Exits in case any of the checks in begin{} fails
 		if ($abort) {
 			return $null
-		}        
+		}
 		Write-Verbose "Using model: $Model"
 		Write-Verbose "Prompt: $Prompt"
 		Write-Verbose "System prompt: $SystemPrompt"
