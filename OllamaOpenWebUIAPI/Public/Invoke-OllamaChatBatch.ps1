@@ -214,15 +214,18 @@ function Invoke-OllamaChatBatch {
 	)
 	
 	begin {
-		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL',
-			'OLLAMA_API_SINGLE_RESPONSE',
-			'OLLAMA_API_TAGS'
+			'OPENWEBUI_URL'
 		)
+		$optionalEnvVars = @{
+			'OLLAMA_API_SINGLE_RESPONSE' = "ollama/api/generate"
+			'OLLAMA_API_TAGS'						 = "ollama/api/tags"
+		}
 		$missingVars = @()
+		$uriValidationFailed = $false
 
+		#region Check Required Variables
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				$missingVars += $var
@@ -233,7 +236,83 @@ function Invoke-OllamaChatBatch {
 			Write-Error "Add the environment variables first into your CLI"
 			$abort = $true
 		}
-		#endregion 
+		#endregion
+
+		#region Validate OPENWEBUI_URL (absolute URI)
+		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
+		if ($openWebUIUrl) {
+			try {
+				$uri = [System.Uri]::new($openWebUIUrl)
+				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
+					$uriValidationFailed = $true
+				} else {
+					Write-Debug "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+				}
+			} catch {
+				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
+				$uriValidationFailed = $true
+			}
+		}
+		#endregion
+
+		#region Set optional variables
+    foreach ($var in $optionalEnvVars.Keys) {
+			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
+				Write-Host "Using default value for $var" -ForegroundColor Yellow
+				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
+			}
+    }
+		#endregion
+
+		#region Combine and validate OLLAMA_API_* URIs
+		$chatApiUrl = $null
+		foreach ($var in $optionalEnvVars.Keys) {
+			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
+			if ($envItem -and $openWebUIUrlItem) {
+				try {
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
+					$fullUrl = $combinedUri.ToString()
+					
+					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
+					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
+					
+					# Store the chat API URL for later use
+					if ($var -eq 'OLLAMA_API_SINGLE_RESPONSE') {
+						$chatApiUrl = $fullUrl
+					}
+				} catch {
+					Write-Error "$var URL combination failed: $($_.Exception.Message)"
+					$uriValidationFailed = $true
+				}
+			}
+		}
+		
+		if ($uriValidationFailed) {
+			$abort = $true
+		}
+		#endregion
+
+		#region Check for Model
+		$availableModels = Get-AvailableOllamaModels -ReturnFullResponse
+
+		if ($availableModels.Count -gt 0){
+			if (-not $Model) {
+				$Model = $availableModels[0].name # By default, use the first model found.
+			} else {
+				if ($Model -notin $availableModels.name) {
+            Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
+            $abort = $true
+        } else {
+            Write-Verbose "✓ Using specified model: $Model" -ForegroundColor Green
+        }
+			}
+		} else {
+			Write-Error "No models found or error connecting to API"
+			$abort = $true
+		}
+		#endregion
 
 		#region Instantiate variables
 		$results = @()
@@ -263,15 +342,14 @@ function Invoke-OllamaChatBatch {
 					$Model
 					$SystemPrompt
 					$env:OPENWEBUI_API_KEY
-					$env:OPENWEBUI_URL
-					$env:OLLAMA_API_SINGLE_RESPONSE
+					$chatApiUrl
 					$TimeoutSeconds
 				)
 
 				Write-Verbose "Starting job $($currentIndex + 1)/$($Prompts.Count): $($currentPrompt.Substring(0, [Math]::Min(50, $currentPrompt.Length)))..."
 				
 				$job = Start-Job -ScriptBlock {
-					param($Prompt, $Model, $SystemPrompt, $ApiKey, $BaseUrl, $SingleResponseEndpoint, $TimeoutSeconds)
+					param($Prompt, $Model, $SystemPrompt, $ApiKey, $fullUri, $TimeoutSeconds)
 					
 					try {
 						# Build request
@@ -288,9 +366,8 @@ function Invoke-OllamaChatBatch {
 						}
 		
 						$jsonBody = $body | ConvertTo-Json -Depth 10
-						$uri = "$BaseUrl$SingleResponseEndpoint"
 
-						$response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $jsonBody -TimeoutSec $TimeoutSeconds
+						$response = Invoke-RestMethod -Uri $fullUri -Method Post -Headers $headers -Body $jsonBody -TimeoutSec $TimeoutSeconds
 						
 						return @{
 							Success = $true
