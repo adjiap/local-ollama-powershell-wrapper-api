@@ -103,8 +103,7 @@ function Invoke-OllamaChat {
 		[string]$Prompt,
 
 		[Parameter(Mandatory=$false)]
-		[ValidateSet("llama3.2:latest", "llama3.1:latest", "mistral:latest", "codellama:latest")]
-		[string]$Model = "llama3.2:latest",
+		[string]$Model,
 
 		[Parameter(Mandatory=$false)]
 		[string]$SystemPrompt = "Only give short answers, with what is asked for",
@@ -196,6 +195,26 @@ function Invoke-OllamaChat {
 		}
 		
 		if ($uriValidationFailed) {
+			$abort = $true
+		}
+		#endregion
+
+		#region Check for Model
+		$availableModels = Get-AvailableOllamaModels -ReturnFullResponse
+
+		if ($availableModels.Count -gt 0){
+			if (-not $Model) {
+				$Model = $availableModels[0].name # By default, use the first model found.
+			} else {
+				if ($Model -notin $availableModels.name) {
+            Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
+            $abort = $true
+        } else {
+            Write-Verbose "✓ Using specified model: $Model" -ForegroundColor Green
+        }
+			}
+		} else {
+			Write-Error "No models found or error connecting to API"
 			$abort = $true
 		}
 		#endregion
