@@ -19,13 +19,7 @@ function Invoke-OllamaChatBatch {
 
 	.PARAMETER Model
 		The Ollama model to use for all prompts. Must be one of the available models.
-		Default: "llama3.2:latest"
-
-		Available models:
-		- llama3.2:latest    - Fast, efficient for general tasks and quick responses
-		- llama3.1:latest    - Balanced performance, good for complex reasoning and detailed responses  
-		- mistral:latest     - Excellent for creative writing, analysis, and instruction following
-		- codellama:latest   - Specialized for code generation, debugging, and programming tasks
+		Defaults to the first found model in Ollama.
 
 	.PARAMETER SystemPrompt
 		System prompt to set the behavior and context for all requests. This helps ensure
@@ -98,7 +92,7 @@ function Invoke-OllamaChatBatch {
 			"Write a PowerShell function to test network connectivity"
 		)
 		Invoke-OllamaChatBatch -Prompts $codePrompts -Model "codellama:7b" -MaxConcurrentJobs 2 -ShowProgress
-		
+
 		Processes code generation prompts using the specialized CodeLlama model with limited
 		concurrency and progress display.
 
@@ -145,24 +139,26 @@ function Invoke-OllamaChatBatch {
 		Demonstrates the performance benefits of batch processing.
 
 	.NOTES
-		Prerequisites:
-		- OPENWEBUI_API_KEY environment variable must be set
-		- OPENWEBUI_URL environment variable must be set  
-		- OLLAMA_API_SINGLE_RESPONSE environment variable must be set
-		- Network access to OpenWebUI instance
+		Environment Variables Required:
+		- OPENWEBUI_API_KEY: Bearer token for API authentication
+		- OPENWEBUI_URL: Base URL for OpenWebUI instance
 		
+		Optional Environment Variables:
+		- OLLAMA_API_GENERATE: API endpoint for generation (e.g., ollama/api/generate)
+		- OLLAMA_API_TAGS: API endpoint for model tags (e.g., ollama/api/tags)
+
 		Performance Considerations:
 		- Higher MaxConcurrentJobs values can improve speed but may overwhelm the system
 		- Consider other users when setting concurrency in team environments
 		- GPU memory limits may affect how many requests can be processed simultaneously
 		- Large prompts or responses may require longer timeout values
-		
+
 		Multi-User Considerations:
 		- Requests are queued in OpenWebUI and processed sequentially by Ollama
 		- Your batch requests will be mixed with other users' requests in the queue
 		- Consider using lower concurrency (2-3) in busy team environments
 		- Monitor system resources to avoid impacting other users
-		
+
 		Error Handling:
 		- Individual request failures don't stop the entire batch (with -ContinueOnError)
 		- Network timeouts are handled gracefully
@@ -183,13 +179,7 @@ function Invoke-OllamaChatBatch {
 		[string[]]$Prompts,
 		
 		[Parameter(Mandatory=$false)]
-		[ValidateSet(
-			"llama3.2:latest",
-			"llama3.1:latest",
-			"mistral:latest",
-			"codellama:latest"
-		)]
-		[string]$Model = "llama3.2:latest",
+		[string]$Model,
 		
 		[Parameter(Mandatory=$false)]
 		[string]$SystemPrompt = "Only give short answers, with what is asked for",
@@ -218,15 +208,18 @@ function Invoke-OllamaChatBatch {
 	)
 	
 	begin {
-		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL',
-			'OLLAMA_API_SINGLE_RESPONSE',
-			'OLLAMA_API_TAGS'
+			'OPENWEBUI_URL'
 		)
+		$optionalEnvVars = @{
+			'OLLAMA_API_SINGLE_RESPONSE' = "ollama/api/generate"
+			'OLLAMA_API_TAGS'						 = "ollama/api/tags"
+		}
 		$missingVars = @()
+		$uriValidationFailed = $false
 
+		#region Check Required Variables
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				$missingVars += $var
@@ -237,7 +230,83 @@ function Invoke-OllamaChatBatch {
 			Write-Error "Add the environment variables first into your CLI"
 			$abort = $true
 		}
-		#endregion 
+		#endregion
+
+		#region Validate OPENWEBUI_URL (absolute URI)
+		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
+		if ($openWebUIUrl) {
+			try {
+				$uri = [System.Uri]::new($openWebUIUrl)
+				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
+					$uriValidationFailed = $true
+				} else {
+					Write-Debug "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+				}
+			} catch {
+				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
+				$uriValidationFailed = $true
+			}
+		}
+		#endregion
+
+		#region Set optional variables
+    foreach ($var in $optionalEnvVars.Keys) {
+			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
+				Write-Host "Using default value for $var" -ForegroundColor Yellow
+				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
+			}
+    }
+		#endregion
+
+		#region Combine and validate OLLAMA_API_* URIs
+		$chatApiUrl = $null
+		foreach ($var in $optionalEnvVars.Keys) {
+			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
+			if ($envItem -and $openWebUIUrlItem) {
+				try {
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
+					$fullUrl = $combinedUri.ToString()
+					
+					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
+					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
+					
+					# Store the chat API URL for later use
+					if ($var -eq 'OLLAMA_API_SINGLE_RESPONSE') {
+						$chatApiUrl = $fullUrl
+					}
+				} catch {
+					Write-Error "$var URL combination failed: $($_.Exception.Message)"
+					$uriValidationFailed = $true
+				}
+			}
+		}
+		
+		if ($uriValidationFailed) {
+			$abort = $true
+		}
+		#endregion
+
+		#region Check for Model
+		$availableModels = Get-AvailableOllamaModels -ReturnFullResponse
+
+		if ($availableModels.Count -gt 0){
+			if (-not $Model) {
+				$Model = $availableModels[0].name # By default, use the first model found.
+			} else {
+				if ($Model -notin $availableModels.name) {
+            Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
+            $abort = $true
+        } else {
+            Write-Verbose "✓ Using specified model: $Model" -ForegroundColor Green
+        }
+			}
+		} else {
+			Write-Error "No models found or error connecting to API"
+			$abort = $true
+		}
+		#endregion
 
 		#region Instantiate variables
 		$results = @()
@@ -267,15 +336,14 @@ function Invoke-OllamaChatBatch {
 					$Model
 					$SystemPrompt
 					$env:OPENWEBUI_API_KEY
-					$env:OPENWEBUI_URL
-					$env:OLLAMA_API_SINGLE_RESPONSE
+					$chatApiUrl
 					$TimeoutSeconds
 				)
 
 				Write-Verbose "Starting job $($currentIndex + 1)/$($Prompts.Count): $($currentPrompt.Substring(0, [Math]::Min(50, $currentPrompt.Length)))..."
 				
 				$job = Start-Job -ScriptBlock {
-					param($Prompt, $Model, $SystemPrompt, $ApiKey, $BaseUrl, $SingleResponseEndpoint, $TimeoutSeconds)
+					param($Prompt, $Model, $SystemPrompt, $ApiKey, $fullUri, $TimeoutSeconds)
 					
 					try {
 						# Build request
@@ -292,9 +360,8 @@ function Invoke-OllamaChatBatch {
 						}
 		
 						$jsonBody = $body | ConvertTo-Json -Depth 10
-						$uri = "$BaseUrl$SingleResponseEndpoint"
 
-						$response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $jsonBody -TimeoutSec $TimeoutSeconds
+						$response = Invoke-RestMethod -Uri $fullUri -Method Post -Headers $headers -Body $jsonBody -TimeoutSec $TimeoutSeconds
 						
 						return @{
 							Success = $true

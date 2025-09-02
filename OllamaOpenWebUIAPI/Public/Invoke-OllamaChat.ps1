@@ -15,13 +15,7 @@ function Invoke-OllamaChat {
 
 	.PARAMETER Model
 		The Ollama model to use for generation. Must be one of the available models.
-		Default: "llama3.2:latest"
-		
-		Available models:
-		- llama3.2:latest   - Fast, efficient for general tasks and quick responses
-		- llama3.1:latest    - Balanced performance, good for complex reasoning and detailed responses (CLI ONLY!)
-		- mistral:latest     - Excellent for creative writing, analysis, and instruction following
-		- codellama:latest   - Specialized for code generation, debugging, and programming tasks
+		Defaults to the first found model in Ollama.
 
 	.PARAMETER SystemPrompt
 		Optional system prompt to set the behavior and context for the model.
@@ -92,9 +86,11 @@ function Invoke-OllamaChat {
 	.NOTES  
 		Required Environment Variables:
 		- OPENWEBUI_API_KEY: Your OpenWebUI API key
-		- OPENWEBUI_URL: Base URL for OpenWebUI (e.g., http://localhost:3000)
-		- OLLAMA_API_GENERATE: API endpoint for generation (e.g., /ollama/api/generate)
-		- OLLAMA_API_TAGS: API endpoint for model tags (e.g., /ollama/api/tags)
+		- OPENWEBUI_URL: Base URL for OpenWebUI (e.g., http://localhost:3000/)
+
+		Optional Environment Variables:
+		- OLLAMA_API_GENERATE: API endpoint for generation (e.g., ollama/api/generate)
+		- OLLAMA_API_TAGS: API endpoint for model tags (e.g., ollama/api/tags)
 
 	.FUNCTIONALITY
 		This function provides single-shot interaction with Ollama models through OpenWebUI,
@@ -107,8 +103,7 @@ function Invoke-OllamaChat {
 		[string]$Prompt,
 
 		[Parameter(Mandatory=$false)]
-		[ValidateSet("llama3.2:latest", "llama3.1:latest", "mistral:latest", "codellama:latest")]
-		[string]$Model = "llama3.2:latest",
+		[string]$Model,
 
 		[Parameter(Mandatory=$false)]
 		[string]$SystemPrompt = "Only give short answers, with what is asked for",
@@ -127,15 +122,18 @@ function Invoke-OllamaChat {
 	)
 	
 	begin {
-		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL',
-			'OLLAMA_API_SINGLE_RESPONSE',
-			'OLLAMA_API_TAGS'
+			'OPENWEBUI_URL'
 		)
+		$optionalEnvVars = @{
+			'OLLAMA_API_SINGLE_RESPONSE' = "ollama/api/generate"
+			'OLLAMA_API_TAGS'						 = "ollama/api/tags"
+		}
 		$missingVars = @()
+		$uriValidationFailed = $false
 
+		#region Check Required Variables
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				$missingVars += $var
@@ -147,13 +145,89 @@ function Invoke-OllamaChat {
 			$abort = $true
 		}
 		#endregion
+
+		#region Validate OPENWEBUI_URL (absolute URI)
+		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
+		if ($openWebUIUrl) {
+			try {
+				$uri = [System.Uri]::new($openWebUIUrl)
+				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
+					$uriValidationFailed = $true
+				} else {
+					Write-Debug "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+				}
+			} catch {
+				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
+				$uriValidationFailed = $true
+			}
+		}
+		#endregion
+
+		#region Set optional variables
+    foreach ($var in $optionalEnvVars.Keys) {
+			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
+				Write-Host "Using default value for $var" -ForegroundColor Yellow
+				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
+			}
+    }
+		#endregion
+
+		#region Combine and validate OLLAMA_API_* URIs
+		$chatApiUrl = $null
+		foreach ($var in $optionalEnvVars.Keys) {
+			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
+			if ($envItem -and $openWebUIUrlItem) {
+				try {
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
+					$fullUrl = $combinedUri.ToString()
+					
+					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
+					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
+					
+					# Store the chat API URL for later use
+					if ($var -eq 'OLLAMA_API_SINGLE_RESPONSE') {
+						$chatApiUrl = $fullUrl
+					}
+				} catch {
+					Write-Error "$var URL combination failed: $($_.Exception.Message)"
+					$uriValidationFailed = $true
+				}
+			}
+		}
+		
+		if ($uriValidationFailed) {
+			$abort = $true
+		}
+		#endregion
+
+		#region Check for Model
+		$availableModels = Get-AvailableOllamaModels -ReturnFullResponse
+
+		if ($availableModels.Count -gt 0){
+			if (-not $Model) {
+				$Model = $availableModels[0].name # By default, use the first model found.
+			} else {
+				if ($Model -notin $availableModels.name) {
+            Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
+            $abort = $true
+        } else {
+            Write-Verbose "✓ Using specified model: $Model" -ForegroundColor Green
+        }
+			}
+		} else {
+			Write-Error "No models found or error connecting to API"
+			$abort = $true
+		}
+		#endregion
 	}
-	
+
 	process {
 		# Exits in case any of the checks in begin{} fails
 		if ($abort) {
 			return $null
-		}        
+		}
 		Write-Verbose "Using model: $Model"
 		Write-Verbose "Prompt: $Prompt"
 		Write-Verbose "System prompt: $SystemPrompt"
@@ -164,41 +238,37 @@ function Invoke-OllamaChat {
 			prompt = $Prompt
 			stream = $false
 		}
-		
+
 		# Add optional parameters
 		if ($MaxTokens) {
 			$body.options = @{}
 			$body.options.num_predict = $MaxTokens
 		}
-		
+
 		if ($Temperature) {
 			if (-not $body.options) { $body.options = @{} }
 			$body.options.temperature = $Temperature
 		}
-		
+
 		# Convert to JSON
 		$jsonBody = $body | ConvertTo-Json -Depth 10
-		
+
 		# Setup headers
 		$headers = @{
 			"Authorization" = "Bearer $env:OPENWEBUI_API_KEY"
 			"Content-Type" = "application/json"
 		}
 
-		# Build URI
-		$uri = "$env:OPENWEBUI_URL" + "$env:OLLAMA_API_SINGLE_RESPONSE"
-		
-		Write-Verbose "Making API call to: $uri"
-
 		try {
-			$response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $jsonBody -ErrorAction Stop
+			Write-Verbose "Making API call to: $chatApiUrl"
+			$response = Invoke-RestMethod -Uri $chatApiUrl -Method Post -Headers $headers -Body $jsonBody -ErrorAction Stop
 
 			if ($ReturnFullResponse) {
 				return $response
 			} else {
 				return $response.response
 			}
-				
+
 		} catch {
 				Write-Error "API call failed: $($_.Exception.Message)"
 				if ($_.Exception.Response) {

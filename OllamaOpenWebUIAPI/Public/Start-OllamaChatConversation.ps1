@@ -8,7 +8,7 @@ function Start-OllamaChatConversation {
 		Supports conversation history, model switching, and various interactive commands.
 
 	.PARAMETER Model
-		The name of the Ollama model to use for the conversation. Default is "llama3.2:latest".
+		The name of the Ollama model to use for the conversation.
 
 	.PARAMETER SystemPrompt
 		The system prompt that defines the AI's behavior and context. Default is "Only give short answers, with what is asked for".
@@ -40,13 +40,19 @@ function Start-OllamaChatConversation {
 		Environment Variables Required:
 		- OPENWEBUI_API_KEY: Bearer token for API authentication
 		- OPENWEBUI_URL: Base URL for OpenWebUI instance
-		- OLLAMA_API_TAGS: Endpoint for available models
-		- OLLAMA_API_CHAT: Endpoint for chat completions
+
+		Optional Environment Variables:
+		- OLLAMA_API_CHAT: API Endpoint for chat completions (e.g., ollama/api/chat)
+		- OLLAMA_API_TAGS: API Endpoint for available models tags (e.g., ollama/api/tags)
+	
+	.FUNCTIONALITY
+		This function starts a conversation with Ollama models through PowerShell CLI
+		using OpenWebUI API
 	#>
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory=$false)]
-		[string]$Model = "llama3.2:latest",
+		[string]$Model,
 
 		[Parameter(Mandatory=$false)]
 		[string]$SystemPrompt = "Only give short answers, with what is asked for",
@@ -56,15 +62,18 @@ function Start-OllamaChatConversation {
 	)
 
 	begin {
-		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL',
-			'OLLAMA_API_CHAT',
-			'OLLAMA_API_TAGS'
+			'OPENWEBUI_URL'
 		)
+		$optionalEnvVars = @{
+			'OLLAMA_API_CHAT' = "ollama/api/chat"
+			'OLLAMA_API_TAGS'	=	"ollama/api/tags"
+		}
 		$missingVars = @()
+		$uriValidationFailed = $false
 
+		#region Check Required Variables
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
 				$missingVars += $var
@@ -73,6 +82,62 @@ function Start-OllamaChatConversation {
 		if ($missingVars.Count -gt 0) {
 			Write-Error "Missing required environment variables: $($missingVars -join ', ')"
 			Write-Error "Add the environment variables first into your CLI"
+			$abort = $true
+		}
+		#endregion
+
+		#region Validate OPENWEBUI_URL (absolute URI)
+		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
+		if ($openWebUIUrl) {
+			try {
+				$uri = [System.Uri]::new($openWebUIUrl)
+				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
+					$uriValidationFailed = $true
+				} else {
+					Write-Verbose "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+				}
+			} catch {
+				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
+				$uriValidationFailed = $true
+			}
+		}
+		#endregion
+		
+		#region Set optional variables
+    foreach ($var in $optionalEnvVars.Keys) {
+			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
+				Write-Host "Using default value for $var" -ForegroundColor Yellow
+				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
+			}
+    }
+		#endregion
+
+		#region Combine and validate OLLAMA_API_* URIs
+		$chatApiUrl = $null
+		foreach ($var in $optionalEnvVars.Keys) {
+			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
+			if ($envItem -and $openWebUIUrlItem) {
+				try {
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
+					$fullUrl = $combinedUri.ToString()
+					
+					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
+					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
+					
+					# Store the chat API URL for later use
+					if ($var -eq 'OLLAMA_API_CHAT') {
+						$chatApiUrl = $fullUrl
+					}
+				} catch {
+					Write-Error "$var URL combination failed: $($_.Exception.Message)"
+					$uriValidationFailed = $true
+				}
+			}
+		}
+
+		if ($uriValidationFailed) {
 			$abort = $true
 		}
 		#endregion
@@ -87,6 +152,8 @@ function Start-OllamaChatConversation {
 			$availableModels | ForEach-Object {
 				Write-Host "    - $($_.name)" -ForegroundColor Cyan
 			}
+			$Model = $availableModels[0].name # By default, use the first model found.
+			Write-Verbose "Using default model: $Model"
 		} else {
 			Write-Error "No models found or error connecting to API"
 			$abort = $true
@@ -182,14 +249,13 @@ function Start-OllamaChatConversation {
 			}
 			
 			$jsonBody = $body | ConvertTo-Json -Depth 10
-			$uri = "$env:OPENWEBUI_URL" + "$env:OLLAMA_API_CHAT"
 			
 			try {		
-				Write-Verbose "Making API call to $uri"
+				Write-Verbose "Making API call to $chatApiUrl"
 				Write-Verbose "Using model $Model"
 				Write-Verbose "System Prompt: $SystemPrompt"
 				
-				$response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $jsonBody
+				$response = Invoke-RestMethod -Uri $chatApiUrl -Method Post -Headers $headers -Body $jsonBody
 				$assistantResponse = $response.message.content
 				
 				Write-Host ""
