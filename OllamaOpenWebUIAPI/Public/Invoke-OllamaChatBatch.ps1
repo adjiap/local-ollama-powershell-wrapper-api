@@ -19,13 +19,7 @@ function Invoke-OllamaChatBatch {
 
 	.PARAMETER Model
 		The Ollama model to use for all prompts. Must be one of the available models.
-		Default: "llama3.2:latest"
-
-		Available models:
-		- llama3.2:latest    - Fast, efficient for general tasks and quick responses
-		- llama3.1:latest    - Balanced performance, good for complex reasoning and detailed responses  
-		- mistral:latest     - Excellent for creative writing, analysis, and instruction following
-		- codellama:latest   - Specialized for code generation, debugging, and programming tasks
+		Defaults to the first found model in Ollama.
 
 	.PARAMETER SystemPrompt
 		System prompt to set the behavior and context for all requests. This helps ensure
@@ -98,7 +92,7 @@ function Invoke-OllamaChatBatch {
 			"Write a PowerShell function to test network connectivity"
 		)
 		Invoke-OllamaChatBatch -Prompts $codePrompts -Model "codellama:7b" -MaxConcurrentJobs 2 -ShowProgress
-		
+
 		Processes code generation prompts using the specialized CodeLlama model with limited
 		concurrency and progress display.
 
@@ -145,24 +139,26 @@ function Invoke-OllamaChatBatch {
 		Demonstrates the performance benefits of batch processing.
 
 	.NOTES
-		Prerequisites:
-		- OPENWEBUI_API_KEY environment variable must be set
-		- OPENWEBUI_URL environment variable must be set  
-		- OLLAMA_API_SINGLE_RESPONSE environment variable must be set
-		- Network access to OpenWebUI instance
+		Environment Variables Required:
+		- OPENWEBUI_API_KEY: Bearer token for API authentication
+		- OPENWEBUI_URL: Base URL for OpenWebUI instance
 		
+		Optional Environment Variables:
+		- OLLAMA_API_GENERATE: API endpoint for generation (e.g., ollama/api/generate)
+		- OLLAMA_API_TAGS: API endpoint for model tags (e.g., ollama/api/tags)
+
 		Performance Considerations:
 		- Higher MaxConcurrentJobs values can improve speed but may overwhelm the system
 		- Consider other users when setting concurrency in team environments
 		- GPU memory limits may affect how many requests can be processed simultaneously
 		- Large prompts or responses may require longer timeout values
-		
+
 		Multi-User Considerations:
 		- Requests are queued in OpenWebUI and processed sequentially by Ollama
 		- Your batch requests will be mixed with other users' requests in the queue
 		- Consider using lower concurrency (2-3) in busy team environments
 		- Monitor system resources to avoid impacting other users
-		
+
 		Error Handling:
 		- Individual request failures don't stop the entire batch (with -ContinueOnError)
 		- Network timeouts are handled gracefully
