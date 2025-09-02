@@ -126,11 +126,14 @@ function Invoke-OllamaChat {
 		#region Check Environment Variables
 		$requiredEnvVars = @(
 			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL',
-			'OLLAMA_API_SINGLE_RESPONSE',
-			'OLLAMA_API_TAGS'
+			'OPENWEBUI_URL'
 		)
+		$optionalEnvVars = @{
+			'OLLAMA_API_SINGLE_RESPONSE' = "ollama/api/generate"
+			'OLLAMA_API_TAGS'						 = "ollama/api/tags"
+		}
 		$missingVars = @()
+		$uriValidationFailed = $false
 
 		foreach ($var in $requiredEnvVars) {
 			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
@@ -142,9 +145,62 @@ function Invoke-OllamaChat {
 			Write-Error "Add the environment variables first into your CLI"
 			$abort = $true
 		}
+
+		# Validate OPENWEBUI_URL (absolute URI)
+		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
+		if ($openWebUIUrl) {
+			try {
+				$uri = [System.Uri]::new($openWebUIUrl)
+				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
+					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
+					$uriValidationFailed = $true
+				} else {
+					Write-Debug "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+				}
+			} catch {
+				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
+				$uriValidationFailed = $true
+			}
+		}
+
+		# Set optional variables with defaults if not present
+    foreach ($var in $optionalEnvVars.Keys) {
+			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
+				Write-Host "Using default value for $var" -ForegroundColor Yellow
+				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
+			}
+    }
+
+		# Combine and validate OLLAMA_API_* URIs
+		$chatApiUrl = $null
+		foreach ($var in $optionalEnvVars.Keys) {
+			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
+			if ($envItem -and $openWebUIUrlItem) {
+				try {
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
+					$fullUrl = $combinedUri.ToString()
+					
+					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
+					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
+					
+					# Store the chat API URL for later use
+					if ($var -eq 'OLLAMA_API_SINGLE_RESPONSE') {
+						$chatApiUrl = $fullUrl
+					}
+				} catch {
+					Write-Error "$var URL combination failed: $($_.Exception.Message)"
+					$uriValidationFailed = $true
+				}
+			}
+		}
+		
+		if ($uriValidationFailed) {
+			$abort = $true
+		}
 		#endregion
 	}
-	
+
 	process {
 		# Exits in case any of the checks in begin{} fails
 		if ($abort) {
@@ -160,41 +216,37 @@ function Invoke-OllamaChat {
 			prompt = $Prompt
 			stream = $false
 		}
-		
+
 		# Add optional parameters
 		if ($MaxTokens) {
 			$body.options = @{}
 			$body.options.num_predict = $MaxTokens
 		}
-		
+
 		if ($Temperature) {
 			if (-not $body.options) { $body.options = @{} }
 			$body.options.temperature = $Temperature
 		}
-		
+
 		# Convert to JSON
 		$jsonBody = $body | ConvertTo-Json -Depth 10
-		
+
 		# Setup headers
 		$headers = @{
 			"Authorization" = "Bearer $env:OPENWEBUI_API_KEY"
 			"Content-Type" = "application/json"
 		}
 
-		# Build URI
-		$uri = "$env:OPENWEBUI_URL" + "$env:OLLAMA_API_SINGLE_RESPONSE"
-		
-		Write-Verbose "Making API call to: $uri"
-
 		try {
-			$response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $jsonBody -ErrorAction Stop
+			Write-Verbose "Making API call to: $chatApiUrl"
+			$response = Invoke-RestMethod -Uri $chatApiUrl -Method Post -Headers $headers -Body $jsonBody -ErrorAction Stop
 
 			if ($ReturnFullResponse) {
 				return $response
 			} else {
 				return $response.response
 			}
-				
+
 		} catch {
 				Write-Error "API call failed: $($_.Exception.Message)"
 				if ($_.Exception.Response) {
