@@ -117,9 +117,9 @@ function Start-OllamaChatConversation {
 		$chatApiUrl = $null
 		foreach ($var in $optionalEnvVars.Keys) {
 			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
-			if ($envItem -and $openWebUIUrlItem) {
+			if ($envItem -and $openWebUIUrl) {
 				try {
-					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
+					$baseUri = [System.Uri]::new($openWebUIUrl)
 					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
 					$fullUrl = $combinedUri.ToString()
 					
