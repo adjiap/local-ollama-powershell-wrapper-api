@@ -55,25 +55,9 @@ function Invoke-OllamaChat {
 		Uses a specific model with a custom system prompt for specialized responses.
 
 	.EXAMPLE
-		Invoke-OllamaChat "Write a Python function to sort a list" -Model "codellama:7b"
-		
-		Uses the code-specialized model for programming tasks.
-
-	.EXAMPLE
 		$response = Invoke-OllamaChat "Tell me a story" -Model "mistral:7b" -Temperature 0.8 -MaxTokens 200
 		
 		Uses creative settings with higher temperature and token limit for storytelling.
-
-	.EXAMPLE
-		Invoke-OllamaChat @"
-		To cook a carrot, you need a big pan and a tool to turn it around a couple of times, 
-		to avoid the carrot to burn. Next you need to turn on the stove and put the pan on 
-		the burner. After approximately cooking it for 5 minutes and turning it a couple of 
-		times you can test the carrots softness, if it suits you. Take the pan off the 
-		burner, shut the burner off and enjoy your carrot.
-		"@ -Model llama3.2:latest -SystemPrompt "Shorten the given sentence into one sentence with 20 words or less"
-
-		In this case, we're shortening the long sentence, and specifically using llama3.2:latest.
 
 	.EXAMPLE
 		$fullResponse = Invoke-OllamaChat "Hello" -ReturnFullResponse
