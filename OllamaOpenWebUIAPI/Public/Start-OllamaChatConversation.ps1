@@ -62,217 +62,131 @@ function Start-OllamaChatConversation {
 	)
 
 	begin {
-		$requiredEnvVars = @(
-			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL'
-		)
-		$optionalEnvVars = @{
-			'OLLAMA_API_CHAT' = "ollama/api/chat"
-			'OLLAMA_API_TAGS'	=	"ollama/api/tags"
-		}
-		$missingVars = @()
-		$uriValidationFailed = $false
-
-		#region Check Required Variables
-		foreach ($var in $requiredEnvVars) {
-			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
-				$missingVars += $var
-			}
-		}
-		if ($missingVars.Count -gt 0) {
-			Write-Error "Missing required environment variables: $($missingVars -join ', ')"
-			Write-Error "Add the environment variables first into your CLI"
-			$abort = $true
-		}
-		#endregion
-
-		#region Validate OPENWEBUI_URL (absolute URI)
-		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
-		if ($openWebUIUrl) {
-			try {
-				$uri = [System.Uri]::new($openWebUIUrl)
-				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
-					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
-					$uriValidationFailed = $true
-				} else {
-					Write-Verbose "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
-				}
-			} catch {
-				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
-				$uriValidationFailed = $true
-			}
-		}
-		#endregion
-		
-		#region Set optional variables
-    foreach ($var in $optionalEnvVars.Keys) {
-			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
-				Write-Host "Using default value for $var" -ForegroundColor Yellow
-				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
-			}
+		#region Initialize Environment
+    try {
+      $config = Initialize-OllamaEnvironment -Model $Model
+    } catch {
+      throw
     }
-		#endregion
+    #endregion
 
-		#region Combine and validate OLLAMA_API_* URIs
-		$chatApiUrl = $null
-		foreach ($var in $optionalEnvVars.Keys) {
-			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
-			if ($envItem -and $openWebUIUrl) {
-				try {
-					$baseUri = [System.Uri]::new($openWebUIUrl)
-					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
-					$fullUrl = $combinedUri.ToString()
-					
-					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
-					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
-					
-					# Store the chat API URL for later use
-					if ($var -eq 'OLLAMA_API_CHAT') {
-						$chatApiUrl = $fullUrl
-					}
-				} catch {
-					Write-Error "$var URL combination failed: $($_.Exception.Message)"
-					$uriValidationFailed = $true
-				}
-			}
-		}
-
-		if ($uriValidationFailed) {
-			$abort = $true
-		}
-		#endregion
-
-
-		#region Displaying Models
-		Write-Host "Fetching available models..." -ForegroundColor Gray
-		$availableModels = Get-AvailableOllamaModels -ReturnFullResponse
-
-		if ($availableModels.Count -gt 0){
-			Write-Host "Available models:" -ForegroundColor Green
-			$availableModels | ForEach-Object {
-				Write-Host "    - $($_.name)" -ForegroundColor Cyan
-			}
-			$Model = $availableModels[0].name # By default, use the first model found.
-			Write-Verbose "Using default model: $Model"
-		} else {
-			Write-Error "No models found or error connecting to API"
-			$abort = $true
-		}
-		#endregion
+    #region Display Available Models
+    Write-Host "Available models:" -ForegroundColor Green
+    $config.AvailableModels | ForEach-Object {
+      Write-Host "    - $($_.name)" -ForegroundColor Cyan
+    }
+    Write-Verbose "Using model: $($config.Model)"
+    #endregion
 	}
 	
 	process {
-		# Exits in case any of the checks in begin{} fails
-		if ($abort) {
-			return $null
-		}
 		#region Load Old Conversation
-		if ($LoadConversation -and (Test-Path $LoadConversation)) {
-			$messages = Get-Content $LoadConversation | ConvertFrom-Json
-			Write-Host "Loaded conversation from $LoadConversation" -ForegroundColor Green
-		} else {
-			$messages = @(
-				@{
-					role = "system"
-					content = $SystemPrompt
-				}
-			)
-		}
-		#endregion
+    if ($LoadConversation -and (Test-Path $LoadConversation)) {
+      $messages = Get-Content $LoadConversation | ConvertFrom-Json
+      Write-Host "Loaded conversation from $LoadConversation" -ForegroundColor Green
+    } else {
+      $messages = @(
+        @{
+          role = "system"
+          content = $SystemPrompt
+        }
+      )
+    }
+    #endregion
 
-		#region Main Conversation Loop
-		Write-Host ""
-		Write-Host "Chat with $Model" -ForegroundColor Green
-		Write-Host "Available commands: exit, quit, clear, save, count, model, set-system" -ForegroundColor Yellow
+    #region Main Conversation Loop
+    Write-Host ""
+    Write-Host "Chat with $($config.Model)" -ForegroundColor Green
+    Write-Host "Available commands: exit, quit, clear, save, count, model, set-system" -ForegroundColor Yellow
 
-		while ($true) {
-			Write-Host ""  # Empty line before prompt
-			$userInput = Read-Host "You"
+    while ($true) {
+      Write-Host ""  # Empty line before prompt
+      $userInput = Read-Host "You"
 
-			if ($userInput.ToLower() -eq "exit" -or $userInput.ToLower() -eq "quit") {
-				Write-Host "Goodbye!" -ForegroundColor Yellow
-				return 
-			}
-			elseif ($userInput.ToLower() -eq "clear") {
-				$messages = @(@{role = "system"; content = $SystemPrompt})
-				Write-Host "Conversation cleared!" -ForegroundColor Yellow
-				continue
-			}
-			elseif ($userInput.ToLower() -eq "save") {
-				$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-				$filename = "conversation_$timestamp.json"
-				$messages | ConvertTo-Json -Depth 10 | Out-File $filename
-				Write-Host "Saved to $filename" -ForegroundColor Green
-				continue
-			}
-			elseif ($userInput.ToLower() -eq "count") {
-				Write-Host "Messages in conversation: $($messages.Count)" -ForegroundColor Gray
-				continue
-			}
-			elseif ($userInput.ToLower() -eq "model") {
-				Write-Host ""
-				Write-Host "Available models:" -ForegroundColor Green
-				$availableModels | ForEach-Object { Write-Host "  - $($_.name)" -ForegroundColor Cyan }
-				
-				Write-Host ""
-				$newModel = Read-Host "Enter new model name (or press Enter to keep current)"
-				if ($newModel -and $newModel.Trim() -ne "") {
-					$Model = $newModel.Trim()
-					Write-Host "Changed model to: $Model" -ForegroundColor Green
-				}
-				continue
-			}
-			elseif ($userInput.ToLower() -eq "set-system") {
-				Write-Host ""
-				Write-Host "Current System Prompt: $SystemPrompt" -ForegroundColor Gray
+      if ($userInput.ToLower() -eq "exit" -or $userInput.ToLower() -eq "quit") {
+        Write-Host "Goodbye!" -ForegroundColor Yellow
+        return 
+      }
+      elseif ($userInput.ToLower() -eq "clear") {
+        $messages = @(@{role = "system"; content = $SystemPrompt})
+        Write-Host "Conversation cleared!" -ForegroundColor Yellow
+        continue
+      }
+      elseif ($userInput.ToLower() -eq "save") {
+        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $filename = "conversation_$timestamp.json"
+        $messages | ConvertTo-Json -Depth 10 | Out-File $filename
+        Write-Host "Saved to $filename" -ForegroundColor Green
+        continue
+      }
+      elseif ($userInput.ToLower() -eq "count") {
+        Write-Host "Messages in conversation: $($messages.Count)" -ForegroundColor Gray
+        continue
+      }
+      elseif ($userInput.ToLower() -eq "model") {
+        Write-Host ""
+        Write-Host "Available models:" -ForegroundColor Green
+        $config.AvailableModels | ForEach-Object { Write-Host "  - $($_.name)" -ForegroundColor Cyan }
+        
+        Write-Host ""
+        $newModel = Read-Host "Enter new model name (or press Enter to keep current)"
+        if ($newModel -and $newModel.Trim() -ne "") {
+          # Validate new model
+          if ($newModel.Trim() -in $config.AvailableModels.name) {
+            $config.Model = $newModel.Trim()
+            Write-Host "Changed model to: $($config.Model)" -ForegroundColor Green
+          } else {
+            Write-Host "Model not found. Available models: $($config.AvailableModels.name -join ', ')" -ForegroundColor Red
+          }
+        }
+        continue
+      }
+      elseif ($userInput.ToLower() -eq "set-system") {
+        Write-Host ""
+        Write-Host "Current System Prompt: $SystemPrompt" -ForegroundColor Gray
 
-				$newSystemPrompt = Read-Host "Enter new system prompt (or press Enter to keep current)"
-				if ($newSystemPrompt -and $newSystemPrompt.Trim() -ne "") {
-					$SystemPrompt = $newSystemPrompt.Trim()
-				}
-				continue
-			}
-			
-			# Add user message
-			$messages += @{role = "user"; content = $userInput}
-			
-			# API call
-			$headers = @{
-				"Authorization" = "Bearer $env:OPENWEBUI_API_KEY"
-				"Content-Type" = "application/json"
-			}
-			
-			$body = @{
-				model = $Model
-				messages = $messages
-				stream = $false
-			}
-			
-			$jsonBody = $body | ConvertTo-Json -Depth 10
-			
-			try {		
-				Write-Verbose "Making API call to $chatApiUrl"
-				Write-Verbose "Using model $Model"
-				Write-Verbose "System Prompt: $SystemPrompt"
-				
-				$response = Invoke-RestMethod -Uri $chatApiUrl -Method Post -Headers $headers -Body $jsonBody
-				$assistantResponse = $response.message.content
-				
-				Write-Host ""
-				Write-Host "Assistant: " -ForegroundColor Cyan -NoNewline
-				Write-Host $assistantResponse
-				
-				# Add response to history
-				$messages += @{role = "assistant"; content = $assistantResponse}
-					
-			} catch {
-					Write-Host ""
-					Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-					# Remove the user message if API call failed
-					$messages = $messages[0..($messages.Count-2)]
-			}
-		}
-		#endregion
+        $newSystemPrompt = Read-Host "Enter new system prompt (or press Enter to keep current)"
+        if ($newSystemPrompt -and $newSystemPrompt.Trim() -ne "") {
+          $SystemPrompt = $newSystemPrompt.Trim()
+        }
+        continue
+      }
+      
+      # Add user message
+      $messages += @{role = "user"; content = $userInput}
+      
+      # Build API request body
+      $body = @{
+        model = $config.Model
+        messages = $messages
+        stream = $false
+      }
+      
+      $jsonBody = $body | ConvertTo-Json -Depth 10
+      
+      try {    
+        Write-Verbose "Making API call to $($config.ChatApiUrl)"
+        Write-Verbose "Using model $($config.Model)"
+        Write-Verbose "System Prompt: $SystemPrompt"
+        
+        $response = Invoke-RestMethod -Uri $config.ChatApiUrl -Method Post -Headers $config.Headers -Body $jsonBody
+        $assistantResponse = $response.message.content
+        
+        Write-Host ""
+        Write-Host "Assistant: " -ForegroundColor Cyan -NoNewline
+        Write-Host $assistantResponse
+        
+        # Add response to history
+        $messages += @{role = "assistant"; content = $assistantResponse}
+          
+      } catch {
+          Write-Host ""
+          Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+          # Remove the user message if API call failed
+          $messages = $messages[0..($messages.Count-2)]
+      }
+    }
+    #endregion
 	}   
 	end {
 		Write-Verbose "Chat Session ended"

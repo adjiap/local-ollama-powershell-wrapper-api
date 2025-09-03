@@ -208,327 +208,218 @@ function Invoke-OllamaChatBatch {
 	)
 	
 	begin {
-		$requiredEnvVars = @(
-			'OPENWEBUI_API_KEY',
-			'OPENWEBUI_URL'
-		)
-		$optionalEnvVars = @{
-			'OLLAMA_API_SINGLE_RESPONSE' = "ollama/api/generate"
-			'OLLAMA_API_TAGS'						 = "ollama/api/tags"
-		}
-		$missingVars = @()
-		$uriValidationFailed = $false
-
-		#region Check Required Variables
-		foreach ($var in $requiredEnvVars) {
-			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
-				$missingVars += $var
-			}
-		}
-		if ($missingVars.Count -gt 0) {
-			Write-Error "Missing required environment variables: $($missingVars -join ', ')"
-			Write-Error "Add the environment variables first into your CLI"
-			$abort = $true
-		}
-		#endregion
-
-		#region Validate OPENWEBUI_URL (absolute URI)
-		$openWebUIUrl = (Get-Item "env:OPENWEBUI_URL" -ErrorAction SilentlyContinue).Value
-		if ($openWebUIUrl) {
-			try {
-				$uri = [System.Uri]::new($openWebUIUrl)
-				if (-not $uri.IsAbsoluteUri -or $uri.Scheme -notin @('http', 'https')) {
-					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
-					$uriValidationFailed = $true
-				} else {
-					Write-Verbose "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
-				}
-			} catch {
-				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
-				$uriValidationFailed = $true
-			}
-		}
-		#endregion
-
-		#region Set optional variables
-    foreach ($var in $optionalEnvVars.Keys) {
-			if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
-				Write-Host "Using default value for $var" -ForegroundColor Yellow
-				[Environment]::SetEnvironmentVariable($var, $optionalEnvVars[$var], 'Process')
-			}
+		#region Initialize Environment
+    try {
+      $config = Initialize-OllamaEnvironment -Model $Model
+    } catch {
+      throw
     }
-		#endregion
+    #endregion
 
-		#region Combine and validate OLLAMA_API_* URIs
-		$chatApiUrl = $null
-		foreach ($var in $optionalEnvVars.Keys) {
-			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
-			if ($envItem -and $openWebUIUrl) {
-				try {
-					$baseUri = [System.Uri]::new($openWebUIUrl)
-					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
-					$fullUrl = $combinedUri.ToString()
-					
-					Write-Host "✓ Valid combined URI for $var`: $fullUrl" -ForegroundColor Green
-					[Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
-					
-					# Store the chat API URL for later use
-					if ($var -eq 'OLLAMA_API_SINGLE_RESPONSE') {
-						$chatApiUrl = $fullUrl
-					}
-				} catch {
-					Write-Error "$var URL combination failed: $($_.Exception.Message)"
-					$uriValidationFailed = $true
-				}
-			}
-		}
-		
-		if ($uriValidationFailed) {
-			$abort = $true
-		}
-		#endregion
-
-		#region Check for Model
-		$availableModels = Get-AvailableOllamaModels -ReturnFullResponse
-
-		if ($availableModels.Count -gt 0){
-			if (-not $Model) {
-				$Model = $availableModels[0].name # By default, use the first model found.
-			} else {
-				if ($Model -notin $availableModels.name) {
-            Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
-            $abort = $true
-        } else {
-            Write-Verbose "✓ Using specified model: $Model"
-        }
-			}
-		} else {
-			Write-Error "No models found or error connecting to API"
-			$abort = $true
-		}
-		#endregion
-
-		#region Instantiate variables
-		$results = @()
-		$jobs = @()
-		$startTime = Get-Date
-		$promptIndex = 0
-		#endregion
+    #region Initialize Variables
+    $results = @()
+    $jobs = @()
+    $startTime = Get-Date
+    $promptIndex = 0
+    #endregion
 	}
 	
 	process {    
-		# Exits in case any of the checks in begin{} fails
-		if ($abort) {
-			return $null
-		}
+		Write-Verbose "Starting batch processing of $($Prompts.Count) prompts with model: $($config.Model)"
+    Write-Verbose "Max concurrent jobs: $MaxConcurrentJobs"
+    
+    while ($promptIndex -lt $Prompts.Count -or $jobs.Count -gt 0) {
+        
+      # Start new jobs up to the limit
+      while ($jobs.Count -lt $MaxConcurrentJobs -and $promptIndex -lt $Prompts.Count) {
+        $currentPrompt = $Prompts[$promptIndex]
+        $currentIndex = $promptIndex
 
-		Write-Verbose "Starting batch processing of $($Prompts.Count) prompts with model: $Model"
-		Write-Verbose "Max concurrent jobs: $MaxConcurrentJobs"
-		while ($promptIndex -lt $Prompts.Count -or $jobs.Count -gt 0) {
-				
-			# Start new jobs up to the limit
-			while ($jobs.Count -lt $MaxConcurrentJobs -and $promptIndex -lt $Prompts.Count) {
-				$currentPrompt = $Prompts[$promptIndex]
-				$currentIndex = $promptIndex
+        $jobArgs = @(
+          $currentPrompt
+          $config.Model
+          $SystemPrompt
+          $env:OPENWEBUI_API_KEY
+          $config.SingleResponseApiUrl
+          $TimeoutSeconds
+        )
 
-				$jobArgs = @(
-					$currentPrompt
-					$Model
-					$SystemPrompt
-					$env:OPENWEBUI_API_KEY
-					$chatApiUrl
-					$TimeoutSeconds
-				)
+        Write-Verbose "Starting job $($currentIndex + 1)/$($Prompts.Count): $($currentPrompt.Substring(0, [Math]::Min(50, $currentPrompt.Length)))..."
+        
+        $job = Start-Job -ScriptBlock {
+          param($Prompt, $Model, $SystemPrompt, $ApiKey, $fullUri, $TimeoutSeconds)
+          
+          try {
+            # Build request
+            $headers = @{
+              "Authorization" = "Bearer $ApiKey"
+              "Content-Type" = "application/json"
+            }
+            
+            $body = @{
+              model = $Model
+              system = $SystemPrompt
+              prompt = $Prompt
+              stream = $false
+            }
 
-				Write-Verbose "Starting job $($currentIndex + 1)/$($Prompts.Count): $($currentPrompt.Substring(0, [Math]::Min(50, $currentPrompt.Length)))..."
-				
-				$job = Start-Job -ScriptBlock {
-					param($Prompt, $Model, $SystemPrompt, $ApiKey, $fullUri, $TimeoutSeconds)
-					
-					try {
-						# Build request
-						$headers = @{
-							"Authorization" = "Bearer $ApiKey"
-							"Content-Type" = "application/json"
-						}
-						
-						$body = @{
-							model = $Model
-							system = $SystemPrompt
-							prompt = $Prompt
-							stream = $false
-						}
-		
-						$jsonBody = $body | ConvertTo-Json -Depth 10
+            $jsonBody = $body | ConvertTo-Json -Depth 10
 
-						$response = Invoke-RestMethod -Uri $fullUri -Method Post -Headers $headers -Body $jsonBody -TimeoutSec $TimeoutSeconds
-						
-						return @{
-							Success = $true
-							Response = $response.response
-							Model = $response.model
-							Duration = $response.total_duration
-							Error = $null
-						}
-					} catch {
-							return @{
-								Success = $false
-								Response = $null
-								Model = $Model
-								Duration = $null
-								Error = $_.Exception.Message
-							}
-					}
-				} -ArgumentList $jobArgs
-				
-				$jobs += @{
-					Job = $job
-					Index = $currentIndex
-					Prompt = $currentPrompt
-					StartTime = Get-Date
-				}
-				
-				$promptIndex++
-			}
-			
-			# Wait for at least one job to complete
-			if ($jobs.Count -gt 0) {
-				do {
-					Start-Sleep -Milliseconds 200
-					
-					$completedJobs = $jobs | Where-Object { $_.Job.State -eq "Completed" -or $_.Job.State -eq "Failed" }
-					
-					if ($ShowProgress) {
-						$totalCompleted = $results.Count + $completedJobs.Count
-						$percentComplete = [Math]::Round(($totalCompleted / $Prompts.Count) * 100, 1)
+            $response = Invoke-RestMethod -Uri $fullUri -Method Post -Headers $headers -Body $jsonBody -TimeoutSec $TimeoutSeconds
+            
+            return @{
+              Success = $true
+              Response = $response.response
+              Model = $response.model
+              Duration = $response.total_duration
+              Error = $null
+            }
+          } catch {
+              return @{
+                Success = $false
+                Response = $null
+                Model = $Model
+                Duration = $null
+                Error = $_.Exception.Message
+              }
+          }
+        } -ArgumentList $jobArgs
+        
+        $jobs += @{
+          Job = $job
+          Index = $currentIndex
+          Prompt = $currentPrompt
+          StartTime = Get-Date
+        }
+        
+        $promptIndex++
+      }
+      
+      # Wait for at least one job to complete
+      if ($jobs.Count -gt 0) {
+        do {
+          Start-Sleep -Milliseconds 200
+          
+          $completedJobs = $jobs | Where-Object { $_.Job.State -eq "Completed" -or $_.Job.State -eq "Failed" }
+          
+          if ($ShowProgress) {
+            $totalCompleted = $results.Count + $completedJobs.Count
+            $percentComplete = [Math]::Round(($totalCompleted / $Prompts.Count) * 100, 1)
+            $percentComplete = [Math]::Min($percentComplete, 100)
+            
+            Write-Progress -Activity "Processing prompts" -Status "$totalCompleted/$($Prompts.Count) completed" -PercentComplete $percentComplete
+          }
+        } while ($completedJobs.Count -eq 0)
+        
+        # Process completed jobs
+        foreach ($completedJob in $completedJobs) {
+          try {
+            $jobResult = Receive-Job -Job $completedJob.Job
+            
+            $result = [PSCustomObject]@{
+              Index = $completedJob.Index
+              Prompt = $completedJob.Prompt
+              Model = $config.Model
+              Success = $jobResult.Success
+              Response = $jobResult.Response
+              Error = $jobResult.Error
+              StartTime = $completedJob.StartTime
+              EndTime = Get-Date
+              Duration = (Get-Date) - $completedJob.StartTime
+            }
+            
+            $results += $result
+            
+            if ($result.Success) {
+              Write-Verbose "Job $($result.Index + 1) completed successfully"
+            } else {
+              Write-Warning "Job $($result.Index + 1) failed: $($result.Error)"
+              if (-not $ContinueOnError) {
+                  throw "Job failed: $($result.Error)"
+              }
+            }
+          } catch {
+            Write-Error "Error processing job $($completedJob.Index + 1): $($_.Exception.Message)"
+            if (-not $ContinueOnError) {
+              throw
+            }
+          } finally {
+            Remove-Job -Job $completedJob.Job -Force
+          }
+        }
+          
+        # Remove completed jobs from tracking
+        $jobs = $jobs | Where-Object { $_.Job.State -ne "Completed" -and $_.Job.State -ne "Failed" }
+      }
+    }
+    if ($ShowProgress) {
+      Write-Progress -Activity "Processing prompts" -Completed
+    }
+  }
+  
+  end {
+    $endTime = Get-Date
+    $totalDuration = $endTime - $startTime
+    $successCount = ($results | Where-Object Success).Count
+    
+    Write-Host "Batch processing completed in $($totalDuration.TotalSeconds) seconds" -ForegroundColor Green
+    Write-Host "Successfully processed: $successCount/$($results.Count)" -ForegroundColor $(if ($successCount -eq $results.Count) { "Green" } else { "Yellow" })
+    
+    # Sort results by original index to maintain order
+    $sortedResults = $results | Sort-Object Index
 
-						# Additional safety check to prevent percentage > 100
-						$percentComplete = [Math]::Min($percentComplete, 100)
-						
-						Write-Progress -Activity "Processing prompts" -Status "$totalCompleted/$($Prompts.Count) completed" -PercentComplete $percentComplete
-					}
-				} while ($completedJobs.Count -eq 0)
-				
-				# Process completed jobs
-				foreach ($completedJob in $completedJobs) {
-					try {
-						$jobResult = Receive-Job -Job $completedJob.Job
-						
-						$result = [PSCustomObject]@{
-							Index = $completedJob.Index
-							Prompt = $completedJob.Prompt
-							Model = $Model
-							Success = $jobResult.Success
-							Response = $jobResult.Response
-							Error = $jobResult.Error
-							StartTime = $completedJob.StartTime
-							EndTime = Get-Date
-							Duration = (Get-Date) - $completedJob.StartTime
-						}
-						
-						$results += $result
-						
-						if ($result.Success) {
-							Write-Verbose "✅ Job $($result.Index + 1) completed successfully"
-						} else {
-							Write-Warning "❌ Job $($result.Index + 1) failed: $($result.Error)"
-							if (-not $ContinueOnError) {
-									throw "Job failed: $($result.Error)"
-							}
-						}
-					} catch {
-						Write-Error "Error processing job $($completedJob.Index + 1): $($_.Exception.Message)"
-						if (-not $ContinueOnError) {
-							throw
-						}
-					} finally {
-						Remove-Job -Job $completedJob.Job -Force
-					}
-				}
-					
-				# Remove completed jobs from tracking
-				$jobs = $jobs | Where-Object { $_.Job.State -ne "Completed" -and $_.Job.State -ne "Failed" }
-			}
-		}
-		if ($ShowProgress) {
-			Write-Progress -Activity "Processing prompts" -Completed
-		}
-	}
-	
-	end {
-		$endTime = Get-Date
-		$totalDuration = $endTime - $startTime
-		$successCount = ($results | Where-Object Success).Count
-		
-		Write-Host "Batch processing completed in $($totalDuration.TotalSeconds) seconds" -ForegroundColor Green
-		Write-Host "Successfully processed: $successCount/$($results.Count)" -ForegroundColor $(if ($successCount -eq $results.Count) { "Green" } else { "Yellow" })
-		
-		# Sort results by original index to maintain order
-		$sortedResults = $results | Sort-Object Index
+    # Return based on flags
+    if ($ReturnFullResponse) {
+      return $sortedResults
+    } elseif ($RemovePromptInAnswer) {
+      $answers = $sortedResults | ForEach-Object {
+        if ($_.Success){
+          $_.Response
+        } else {
+          "[ERROR: $($_.Error)]"
+        }
+      }
 
-		# Return based on flags
-		if ($ReturnFullResponse) {
-			# Always return full objects when explicitly requested
-			return $sortedResults
+      if ($PassThru) {
+        return $answers
+      } else {
+        Write-Host ""
+        for ($i = 0; $i -lt $answers.Count; $i++) {
+          if ($sortedResults[$i].Success) {
+            Write-Host "$($i + 1). $($answers[$i])" -ForegroundColor White
+          } else {
+            Write-Host "$($i + 1). $($answers[$i])" -ForegroundColor Red
+          }
+          Write-Host ""
+        }
+      }
+    } else {
+      $formattedResults = $sortedResults | ForEach-Object {
+        [PSCustomObject]@{
+          Index = $_.Index + 1
+          Question = $_.Prompt
+          Answer = if ($_.Success) { $_.Response } else { "[ERROR: $($_.Error)]" }
+          Success = $_.Success
+          Error = $_.Error
+          Duration = $_.Duration
+        }
+      }
 
-		} elseif ($RemovePromptInAnswer) {
-			# Return only the answers
-			$answers = $sortedResults | ForEach-Object {
-				if ($_.Success){
-					$_.Response
-				} else {
-					"[ERROR: $($_.Error)]"
-				}
-			}
-
-			if ($PassThru) {
-				# Being assigned to variable - return array
-				return $answers
-
-			} else {
-				# Directly displays the results
-				Write-Host ""
-				for ($i = 0; $i -lt $answers.Count; $i++) {
-					if ($sortedResults[$i].Success) {
-						Write-Host "$($i + 1). $($answers[$i])" -ForegroundColor White
-					} else {
-						Write-Host "$($i + 1). $($answers[$i])" -ForegroundColor Red
-					}
-					Write-Host ""
-				}
-			}
-
-		} else {
-			# Default: Return formatted prompt + answer or displayed
-			$formattedResults = $sortedResults | ForEach-Object {
-				[PSCustomObject]@{
-					Index = $_.Index + 1
-					Question = $_.Prompt
-					Answer = if ($_.Success) { $_.Response } else { "[ERROR: $($_.Error)]" }
-					Success = $_.Success
-					Error = $_.Error
-					Duration = $_.Duration
-				}
-			}
-
-			if ($PassThru) {
-				# Being assigned to variable - return objects
-				return $formattedResults
-
-			} else {
-				# Not assigned - display formatted
-				Write-Host ""
-				$formattedResults | ForEach-Object {
-						if ($_.Success) {
-								Write-Host "$($_.Index). $($_.Question)" -ForegroundColor Cyan
-								Write-Host "   > $($_.Answer)" -ForegroundColor White
-						} else {
-								Write-Host "$($_.Index). $($_.Question)" -ForegroundColor Cyan
-								Write-Host "   > $($_.Answer)" -ForegroundColor Red
-						}
-						Write-Host ""
-				}
-			}
-		}
-	}
+      if ($PassThru) {
+        return $formattedResults
+      } else {
+        Write-Host ""
+        $formattedResults | ForEach-Object {
+            if ($_.Success) {
+                Write-Host "$($_.Index). $($_.Question)" -ForegroundColor Cyan
+                Write-Host "   > $($_.Answer)" -ForegroundColor White
+            } else {
+                Write-Host "$($_.Index). $($_.Question)" -ForegroundColor Cyan
+                Write-Host "   > $($_.Answer)" -ForegroundColor Red
+            }
+            Write-Host ""
+        }
+      }
+    }
+  }
 }
