@@ -155,7 +155,7 @@ function Invoke-OllamaChat {
 					Write-Error "OPENWEBUI_URL is not a valid absolute URI: $openWebUIUrl"
 					$uriValidationFailed = $true
 				} else {
-					Write-Verbose "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
+					Write-Debug "✓ Valid URI for OPENWEBUI_URL: $openWebUIUrl"
 				}
 			} catch {
 				Write-Error "OPENWEBUI_URL is malformed: $openWebUIUrl"
@@ -177,9 +177,9 @@ function Invoke-OllamaChat {
 		$chatApiUrl = $null
 		foreach ($var in $optionalEnvVars.Keys) {
 			$envItem = Get-Item "env:$var" -ErrorAction SilentlyContinue
-			if ($envItem -and $openWebUIUrl) {
+			if ($envItem -and $openWebUIUrlItem) {
 				try {
-					$baseUri = [System.Uri]::new($openWebUIUrl)
+					$baseUri = [System.Uri]::new($openWebUIUrlItem.Value)
 					$combinedUri = [System.Uri]::new($baseUri, $envItem.Value)
 					$fullUrl = $combinedUri.ToString()
 					
@@ -213,7 +213,7 @@ function Invoke-OllamaChat {
             Write-Error "Model '$Model' not found. Available models: $($availableModels.name -join ', ')"
             $abort = $true
         } else {
-            Write-Verbose "✓ Using specified model: $Model"
+            Write-Verbose "✓ Using specified model: $Model" -ForegroundColor Green
         }
 			}
 		} else {
