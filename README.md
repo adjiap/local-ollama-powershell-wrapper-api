@@ -45,6 +45,8 @@ You first need to get the API Key for your account. You can get it in Settings -
 Required environment variables:
 - `OPENWEBUI_URL`: Base URL for OpenWebUI (with OpenWebUI, it would be by default `http://localhost:3000`)
 - `OPENWEBUI_API_KEY`: API authentication key
+
+Optional environment variables
 - `OLLAMA_API_CHAT`: Chat endpoint path 
 - `OLLAMA_API_SINGLE_RESPONSE`: Generate endpoint path
 - `OLLAMA_API_TAGS`: Tags endpoint path
@@ -56,12 +58,16 @@ Required environment variables:
 Have the variables above imported in your environment. Here's a sample `.env` for you to copy to get you started.
 
 ```txt
-# .env
+# ~\.env
+
+# Required
 OPENWEBUI_URL="http://localhost:3000/"
 OPENWEBUI_API_KEY="<Insert API Key here>" # e.g. sk-89jf98jfkasjdfaksd89jkfljalk
-OLLAMA_API_SINGLE_RESPONSE="ollama/api/generate"
-OLLAMA_API_CHAT="ollama/api/chat"
-OLLAMA_API_TAGS="ollama/api/tags"
+
+# Optional
+# OLLAMA_API_SINGLE_RESPONSE="ollama/api/generate/"
+# OLLAMA_API_CHAT="ollama/api/chat"
+# OLLAMA_API_TAGS="ollama/api/tags"
 ```
 
 Then, there are two recommended ways for you to import the modules, via <a href="#import-module">Import-Module</a> or via <a href="#persistent-install">Persistent Installation</a>
