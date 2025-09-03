@@ -116,8 +116,7 @@ Describe "Invoke-OllamaChatBatch" {
       } -ModuleName OllamaOpenWebUIAPI
       
       $prompts = @("Test")
-      $result = Invoke-OllamaChatBatch -Prompts $prompts -Model "nonexistent:model" -ErrorAction SilentlyContinue
-      $result | Should -BeNullOrEmpty
+      { Invoke-OllamaChatBatch -Prompts $prompts -Model "nonexistent:model" } | Should -Throw "*not found*"
     }
 
     It "Should use default model when none specified" {

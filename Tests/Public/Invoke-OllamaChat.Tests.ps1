@@ -142,8 +142,7 @@ Describe "Invoke-OllamaChat" {
         return @(@{ name = "llama3.2:3b" })
       } -ModuleName OllamaOpenWebUIAPI
       
-      $result = Invoke-OllamaChat "Test" -Model "nonexistent:model" -ErrorAction SilentlyContinue
-      $result | Should -BeNullOrEmpty
+      { Invoke-OllamaChat "Test" -Model "nonexistent:model" } | Should -Throw "*not found*"
     }
 
     It "Should handle temperature parameter" {
