@@ -115,8 +115,6 @@ function Initialize-OllamaEnvironment {
       Write-Verbose "Valid combined URI for $var`: $fullUrl"
       $apiUrls[$var] = $fullUrl
       
-      # Update environment variable with full URL
-      [Environment]::SetEnvironmentVariable($var, $fullUrl, 'Process')
     } catch {
       throw "$var URL combination failed: $($_.Exception.Message)"
     }
